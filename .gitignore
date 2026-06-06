@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.little_sunshine.json
+dist/
+dist-electron/
+node_modules/
+*.log
+.tauri/
