@@ -8,9 +8,10 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer, QPoint, QPointF, QRectF, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QRadialGradient, QLinearGradient,
-    QPainterPath, QMouseEvent, QCursor, QFont, QRegion, QPolygonF
+    QPainterPath, QMouseEvent, QCursor, QFont, QRegion, QPolygonF, QPixmap
 )
 from PyQt6.QtWidgets import QApplication, QWidget, QMenu, QLabel, QVBoxLayout, QHBoxLayout
+from bird_skins import load_all_skins, BirdSkin
 
 # ---- 常量 ----
 S = 80
@@ -231,6 +232,13 @@ class BirdWindow(QWidget):
         # 粒子
         self.particles = []
 
+        # 皮肤系统
+        self.all_skins = load_all_skins()
+        # 默认使用第一个可用皮肤
+        first_key = next(iter(self.all_skins), None)
+        self.current_skin = self.all_skins.get(first_key)
+        self.skin_name = first_key or ''
+
         # 状态面板
         self.status_panel = StatusPanel()
         self.status_visible = False
@@ -433,6 +441,22 @@ class BirdWindow(QWidget):
         p.drawEllipse(QPointF(x, y), S * 0.35 * sc, 6 * sc)
 
     def draw_bird(self, p, t):
+        # 优先用精灵图渲染
+        if self.current_skin and self.current_skin.has_state(self.state):
+            pm = self.current_skin.get_pixmap(self.state, self.anim_f, size=S)
+            if pm:
+                p.save()
+                bx = self.d.x + (S - pm.width()) / 2
+                by = self.d.y + (S - pm.height()) / 2
+                if not self.face_r:
+                    p.translate(bx + pm.width(), 0)
+                    p.scale(-1, 1)
+                    bx = 0
+                p.drawPixmap(int(bx), int(by), pm)
+                p.restore()
+                return
+
+        # fallback: 代码绘制
         x, y, s = self.d.x, self.d.y, S
         p.save()
         p.translate(x + s / 2, y + s / 2)
@@ -581,6 +605,17 @@ class BirdWindow(QWidget):
         """)
         feed = menu.addAction('🌽 喂食'); pet = menu.addAction('💕 摸摸头')
         menu.addSeparator(); status = menu.addAction('📊 查看状态')
+
+        # 皮肤子菜单
+        skin_menu = menu.addMenu('🎨 换皮肤')
+        skin_menu.setStyleSheet(menu.styleSheet())
+        for skin_key, skin_obj in sorted(self.all_skins.items()):
+            label = f'  {skin_obj.display_name}'
+            if skin_key == self.skin_name:
+                label = f'✓ {skin_obj.display_name}'
+            act = skin_menu.addAction(label)
+            act.setData(skin_key)
+
         menu.addSeparator(); quit_a = menu.addAction('👋 再见')
 
         action = menu.exec(pos)
@@ -594,6 +629,10 @@ class BirdWindow(QWidget):
             self._toggle_status()
         elif action == quit_a:
             self.d.state = self.state; self.d.save(); QApplication.quit()
+        elif action and action.data() and action.data() in self.all_skins:
+            self.current_skin = self.all_skins[action.data()]
+            self.skin_name = action.data()
+            self.update()
 
     def _toggle_status(self):
         if self.status_visible:

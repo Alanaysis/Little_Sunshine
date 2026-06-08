@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pixel-canvas": {
+      "command": "npx",
+      "args": ["-y", "pixel-canvas-mcp"]
+    }
+  }
+}
