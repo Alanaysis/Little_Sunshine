@@ -184,7 +184,7 @@ class BirdData:
         self.name = '小阳光'
         self.mood = 80.0; self.hunger = 30.0; self.energy = 90.0; self.love = 50.0
         self.state = 'idle'; self.x = float(BIRD_X0); self.y = float(BIRD_Y0)
-        self.last_saved = 0
+        self.last_saved = 0; self.follow_mouse = False
 
     def save(self):
         self.last_saved = time.time()
@@ -192,7 +192,8 @@ class BirdData:
             with open(SAVE_FILE, 'w') as f:
                 json.dump({'name': self.name, 'mood': self.mood, 'hunger': self.hunger,
                            'energy': self.energy, 'love': self.love, 'state': self.state,
-                           'x': self.x, 'y': self.y, 'last_saved': self.last_saved}, f)
+                           'x': self.x, 'y': self.y, 'last_saved': self.last_saved,
+                           'follow_mouse': self.follow_mouse}, f)
         except Exception: pass
 
     def load(self):
@@ -204,7 +205,7 @@ class BirdData:
             self.energy = float(d.get('energy', 90)); self.love = float(d.get('love', 50))
             self.state = d.get('state', 'idle')
             self.x = float(d.get('x', BIRD_X0)); self.y = float(d.get('y', BIRD_Y0))
-            self.last_saved = d.get('last_saved', 0)
+            self.last_saved = d.get('last_saved', 0); self.follow_mouse = d.get('follow_mouse', False)
             elapsed = time.time() - self.last_saved; hours = elapsed / 3600
             self.hunger = min(100, self.hunger + hours * 10)
             if self.hunger > 70: self.mood = max(0, self.mood - hours * 3)
@@ -229,6 +230,10 @@ class BirdWindow(QWidget):
         # 拖拽
         self.dragging = False; self.drag_sx = 0; self.drag_sy = 0
 
+        # 跟随鼠标
+        self.follow_mouse = self.d.follow_mouse
+        self.follow_cursor_pos = QPoint(0, 0)
+
         # 粒子
         self.particles = []
 
@@ -251,6 +256,12 @@ class BirdWindow(QWidget):
         self.move(cursor.x() - WIN_W // 2, cursor.y() - WIN_H // 2)
         self.setMouseTracking(True)
         self.update_input_mask()
+        if self.follow_mouse:
+            # 启动时鸟居中到屏幕
+            screen = QApplication.primaryScreen().geometry()
+            self.d.x = (screen.width() - S) / 2
+            self.d.y = (screen.height() - S) / 2
+            self._resize_for_follow()
 
         # 游戏循环
         self.last_time = time.time() * 1000
@@ -268,12 +279,43 @@ class BirdWindow(QWidget):
             self.setMask(QRegion(cx - r, cy - r, r * 2, r * 2, QRegion.RegionType.Ellipse))
         except Exception: pass
 
+    # ---- 窗口尺寸 ----
+
+    def _resize_for_follow(self):
+        if self.follow_mouse:
+            # 记录鸟当前屏幕绝对坐标
+            abs_x = self.x() + self.d.x
+            abs_y = self.y() + self.d.y
+            # 窗口铺满全屏
+            screen = QApplication.primaryScreen().geometry()
+            self.setFixedSize(screen.width(), screen.height())
+            self.move(0, 0)
+            # 鸟保持在原来的屏幕位置
+            self.d.x = abs_x
+            self.d.y = abs_y
+            self.target_x = self.d.x; self.target_y = self.d.y
+        else:
+            # 记录鸟当前屏幕绝对坐标
+            abs_x = self.x() + self.d.x
+            abs_y = self.y() + self.d.y
+            # 窗口缩回小尺寸，居中到鸟的位置
+            self.setFixedSize(WIN_W, WIN_H)
+            self.move(int(abs_x - WIN_W / 2), int(abs_y - WIN_H / 2))
+            # 鸟在小窗口内居中
+            self.d.x = (WIN_W - S) / 2
+            self.d.y = (WIN_H - S) / 2
+            self.target_x = self.d.x; self.target_y = self.d.y
+
     # ---- 游戏循环 ----
 
     def tick(self):
         now = time.time() * 1000
         dt = min(now - self.last_time, DT_CAP)
         self.last_time = now
+
+        # 每帧读取光标位置（跟随模式）
+        if self.follow_mouse and not self.dragging:
+            self.follow_cursor_pos = self.mapFromGlobal(QCursor.pos())
 
         self.update_state(dt); self.update_decay(dt / 1000)
         self.update_particles(dt); self.spawn_effects(dt)
@@ -313,41 +355,61 @@ class BirdWindow(QWidget):
 
         if self.dragging: return
 
-        bx0, by0, bx1, by1 = 0, 0, WIN_W - S, WIN_H - S
+        bx0, by0, bx1, by1 = 0, 0, self.width() - S, self.height() - S
         if self.state == 'idle':
-            if self.wander_t > self.next_wander:
-                self.wander_t = 0; self.next_wander = random.uniform(WALK_MIN, WALK_MAX)
-                if random.random() > 0.4:
-                    self.target_x = clamp(self.target_x + random.uniform(-75, 75), bx0, bx1)
-                    self.target_y = clamp(self.target_y + random.uniform(-40, 40), by0, by1)
-                    self.set_state('walk')
-                elif self.d.energy > ENERGY_FLY and random.random() > 0.5:
-                    self.target_x = clamp(self.target_x + random.uniform(-100, 100), bx0, bx1)
-                    self.target_y = clamp(random.uniform(0, by1), by0, by1)
+            if self.follow_mouse:
+                tx = clamp(self.follow_cursor_pos.x() - S / 2, bx0, bx1)
+                ty = clamp(self.follow_cursor_pos.y() - S / 2, by0, by1)
+                if math.hypot(tx - self.d.x, ty - self.d.y) > 3:
+                    self.target_x = tx; self.target_y = ty
                     self.set_state('fly')
-            if self.d.hunger > HUNGER_WANDER and self.wander_t > 2000:
-                self.wander_t = 0
-                self.target_x = clamp(self.target_x + random.uniform(-50, 50), bx0, bx1)
-                self.target_y = clamp(self.target_y + random.uniform(-30, 30), by0, by1)
-                self.set_state('walk')
-            if self.d.energy < ENERGY_LOW and self.d.hunger < HUNGER_WANDER:
-                self.set_state('sleep')
+            else:
+                if self.wander_t > self.next_wander:
+                    self.wander_t = 0; self.next_wander = random.uniform(WALK_MIN, WALK_MAX)
+                    if random.random() > 0.4:
+                        self.target_x = clamp(self.target_x + random.uniform(-75, 75), bx0, bx1)
+                        self.target_y = clamp(self.target_y + random.uniform(-40, 40), by0, by1)
+                        self.set_state('walk')
+                    elif self.d.energy > ENERGY_FLY and random.random() > 0.5:
+                        self.target_x = clamp(self.target_x + random.uniform(-100, 100), bx0, bx1)
+                        self.target_y = clamp(random.uniform(0, by1), by0, by1)
+                        self.set_state('fly')
+                if self.d.hunger > HUNGER_WANDER and self.wander_t > 2000:
+                    self.wander_t = 0
+                    self.target_x = clamp(self.target_x + random.uniform(-50, 50), bx0, bx1)
+                    self.target_y = clamp(self.target_y + random.uniform(-30, 30), by0, by1)
+                    self.set_state('walk')
+                if self.d.energy < ENERGY_LOW and self.d.hunger < HUNGER_WANDER:
+                    self.set_state('sleep')
 
         if self.state == 'walk':
+            if self.follow_mouse:
+                self.set_state('fly')
             dx, dy = self.target_x - self.d.x, self.target_y - self.d.y
             dist = math.hypot(dx, dy)
             if dist > 3:
                 self.d.x += dx / dist * SPEED_WALK * dt; self.d.y += dy / dist * SPEED_WALK * dt
                 self.face_r = dx > 0
-            else: self.set_state('idle')
+            elif not self.follow_mouse:
+                self.set_state('idle')
 
         if self.state == 'fly':
+            if self.follow_mouse:
+                tx = clamp(self.follow_cursor_pos.x() - S / 2, bx0, bx1)
+                ty = clamp(self.follow_cursor_pos.y() - S / 2, by0, by1)
+                self.target_x = tx; self.target_y = ty
             dx, dy = self.target_x - self.d.x, self.target_y - self.d.y
             dist = math.hypot(dx, dy)
-            if dist > 5:
-                self.d.x += dx / dist * SPEED_FLY * dt; self.d.y += dy / dist * SPEED_FLY * dt
+            if dist > 1:
+                # 到达减速：远处匀速，近处渐停
+                if self.follow_mouse:
+                    speed = min(SPEED_FLY * 0.4, dist * 0.015)
+                else:
+                    speed = SPEED_FLY
+                self.d.x += dx / dist * speed * dt; self.d.y += dy / dist * speed * dt
                 self.face_r = dx > 0
-            else: self.set_state('idle')
+            elif not self.follow_mouse:
+                self.set_state('idle')
 
         if self.state == 'eat' and self.state_t > EAT_MS:
             self.d.hunger = max(0, self.d.hunger - FEED_HUNGER)
@@ -475,15 +537,43 @@ class BirdWindow(QWidget):
         p.setBrush(QBrush(QColor('#FFF5CC'))); p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(0, s * 0.05), s * 0.25, s * 0.3)
 
-        # 翅膀
-        wa = {'fly': math.sin(t * 12) * 0.8, 'idle': math.sin(t * 1.5) * 0.1}.get(self.state, math.sin(t * 4) * 0.3)
+        # 翅膀（多段关节）
+        if self.state == 'fly':
+            ph = t * 12
+            shoulder_a = math.sin(ph) * 0.5
+            mid_a = math.sin(ph - 0.6) * 0.9
+            tip_a = math.sin(ph - 1.2) * 1.2
+        else:
+            wa = {'idle': math.sin(t * 1.5) * 0.1}.get(self.state, math.sin(t * 4) * 0.3)
+            shoulder_a = wa * 0.4; mid_a = wa * 0.7; tip_a = wa
         for side in (-1, 1):
-            p.save(); p.translate(side * s * 0.25, -s * 0.1)
-            p.rotate(math.degrees(side * wa + side * 0.3))
-            wg = QRadialGradient(QPointF(0, 0), s * 0.3)
-            wg.setColorAt(0, QColor('#FFCC44')); wg.setColorAt(1, QColor('#FFB800'))
-            p.setBrush(QBrush(wg)); p.setPen(QPen(QColor('#E8A000'), 0.8))
-            p.drawEllipse(QPointF(0, 0), s * 0.15, s * 0.3)
+            p.save()
+            p.translate(side * s * 0.28, -s * 0.05)
+            # 肩
+            p.rotate(math.degrees(side * shoulder_a + side * 0.2))
+            wg1 = QRadialGradient(QPointF(0, 0), s * 0.18)
+            wg1.setColorAt(0, QColor('#FFCC44')); wg1.setColorAt(1, QColor('#FFB800'))
+            p.setBrush(QBrush(wg1)); p.setPen(QPen(QColor('#E8A000'), 0.8))
+            p.drawEllipse(QPointF(0, 0), s * 0.12, s * 0.18)
+            # 中段（二级飞羽）
+            p.translate(0, -s * 0.16)
+            p.rotate(math.degrees(side * (mid_a - shoulder_a) + side * 0.3))
+            wg2 = QRadialGradient(QPointF(0, 0), s * 0.22)
+            wg2.setColorAt(0, QColor('#FFCC44')); wg2.setColorAt(1, QColor('#FFB000'))
+            p.setBrush(QBrush(wg2)); p.setPen(QPen(QColor('#E8A000'), 0.8))
+            p.drawEllipse(QPointF(0, 0), s * 0.10, s * 0.22)
+            # 翼尖（初级飞羽）
+            p.translate(0, -s * 0.20)
+            p.rotate(math.degrees(side * (tip_a - mid_a)))
+            wg3 = QRadialGradient(QPointF(0, 0), s * 0.16)
+            wg3.setColorAt(0, QColor('#FFCC44')); wg3.setColorAt(1, QColor('#E8A000'))
+            p.setBrush(QBrush(wg3)); p.setPen(QPen(QColor('#D49000'), 0.8))
+            p.drawEllipse(QPointF(0, 0), s * 0.07, s * 0.16)
+            # 羽尖
+            p.translate(0, -s * 0.14)
+            p.rotate(math.degrees(side * (tip_a - mid_a) * 0.5))
+            p.setBrush(QBrush(QColor('#FFB800')))
+            p.drawEllipse(QPointF(0, 0), s * 0.04, s * 0.10)
             p.restore()
 
         # 头
@@ -604,6 +694,8 @@ class BirdWindow(QWidget):
             QMenu::item:selected { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #FFD49A, stop:1 #FFB84D); }
         """)
         feed = menu.addAction('🌽 喂食'); pet = menu.addAction('💕 摸摸头')
+        follow_label = '🖱️ 取消跟随' if self.follow_mouse else '🖱️ 跟随鼠标'
+        follow = menu.addAction(follow_label)
         menu.addSeparator(); status = menu.addAction('📊 查看状态')
 
         # 皮肤子菜单
@@ -625,6 +717,10 @@ class BirdWindow(QWidget):
             self.set_state('pet')
             self.d.love = min(100, self.d.love + PET_LOVE); self.d.mood = min(100, self.d.mood + PET_MOOD)
             self.spawn_burst('heart', 6)
+        elif action == follow:
+            self.follow_mouse = not self.follow_mouse
+            self.d.follow_mouse = self.follow_mouse
+            self._resize_for_follow()
         elif action == status:
             self._toggle_status()
         elif action == quit_a:

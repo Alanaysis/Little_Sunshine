@@ -178,15 +178,46 @@ def walk_img(f, C, _, tick):
     put(f, 18, foot_r, C['feet'])
 
 def fly_img(f, C, _, tick):
-    wing_y = [-2, 0, 2, 0][tick % 4]
-    fill_ellipse(f, 16, 16, 5, 5, C['body'])
-    fill_ellipse(f, 16, 17, 4, 3, C['belly'])
-    fill_ellipse(f, 16, 10, 3, 3, C['head'])
-    fill_ellipse(f, 16, 14+wing_y, 4, 2, C['wing'])
-    draw_eyes(f, C)
-    draw_beak(f, C)
-    put(f, 14, 21, C['feet'])
-    put(f, 18, 21, C['feet'])
+    """飞行帧 — 翅膀大幅上下扇动"""
+    # 身体随翅膀升降：翅上→身降，翅下→身升
+    by = [17, 16, 15, 16][tick % 4]
+
+    # 身体 + 肚皮
+    fill_ellipse(f, 16, by, 5, 5, C['body'])
+    fill_ellipse(f, 16, by + 1, 4, 3, C['belly'])
+    # 头
+    fill_ellipse(f, 16, by - 6, 3, 3, C['head'])
+
+    # 翅膀（4帧：上、中上、下、中下）
+    # 每帧画 3 段羽毛：内段(宽)→中段→外段(窄)
+    wing_phases = [
+        (-5, -3, -1),  # 翅膀上举
+        (-2, -1, 0),   # 翅膀中上
+        (1, 2, 3),     # 翅膀下压
+        (-1, 0, 1),    # 翅膀中下
+    ]
+    wy = wing_phases[tick % 4]
+
+    for side in (-1, 1):
+        sx = 16 + side * 6  # 肩膀 x
+        # 内段（靠近身体，较宽）
+        for dy in range(-1, 2):
+            fill_ellipse(f, sx + side * 1, by + wy[0] + dy, 2, 1, C['wing'])
+        # 中段
+        for dy in range(-1, 1):
+            fill_ellipse(f, sx + side * 4, by + wy[1] + dy, 2, 1, C['wing_d'])
+        # 外段（翼尖，窄）
+        put(f, sx + side * 7, by + wy[2], C['wing_d'])
+        put(f, sx + side * 7, by + wy[2] - 1, C['wing_d'])
+        put(f, sx + side * 8, by + wy[2], C['wing_d'])
+
+    # 眼睛
+    draw_eyes(f, C, oy=by - 16)
+    # 嘴巴
+    draw_beak(f, C, oy=by - 16)
+    # 脚
+    put(f, 14, by + 6, C['feet'])
+    put(f, 18, by + 6, C['feet'])
 
 def eat_img(f, C, _, tick):
     head_off = [0, 1, 2, 1][tick % 4]
